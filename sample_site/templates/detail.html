@@ -24,6 +24,14 @@
       {% if a.target %}<dt>所指公告</dt><dd id="target-notice"><a href="/detail/{{ a.target }}.html">{{ a.target }}</a></dd>{% endif %}
     </dl>
     <div class="notice-body">{{ a.body }}</div>
+    {% if attachments %}
+    <h2>附件下载</h2>
+    <ul class="attachments">
+      {% for f in attachments %}
+      <li><a href="{{ f.href }}">{{ f.label }}</a></li>
+      {% endfor %}
+    </ul>
+    {% endif %}
     <p><a href="/list.html?page=1">返回列表</a></p>
   </div>
 </body>

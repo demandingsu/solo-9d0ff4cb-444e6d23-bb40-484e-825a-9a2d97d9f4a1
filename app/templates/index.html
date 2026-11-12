@@ -8,6 +8,8 @@
     :root { --blue: #2c5f8a; --green: #1e7e34; --red: #b02a37; --gray: #6c757d; }
     * { box-sizing: border-box; }
     body { font-family: "Microsoft YaHei", "PingFang SC", sans-serif; max-width: 1080px; margin: 0 auto; padding: 1.5em 1em 3em; color: #2b2b2b; background: #fafbfc; }
+    nav.top { margin-bottom: 1em; font-size: .95em; }
+    nav.top a { color: var(--blue); margin-right: 1.2em; }
     h1 { color: var(--blue); margin-bottom: .2em; }
     h2 { margin-top: 1.8em; border-left: 4px solid var(--blue); padding-left: .5em; font-size: 1.15em; }
     .subtitle { color: var(--gray); margin-top: 0; }
@@ -40,6 +42,10 @@
   </style>
 </head>
 <body>
+  <nav class="top">
+    <a href="/">截标时间核对</a><a href="/attachments">项目附件核查</a>
+  </nav>
+
   <h1>截标时间核对工具</h1>
   <p class="subtitle">输入与示例公告站同结构的列表网址，抓取同源分页与详情页，按项目串起公告链，核对真实截标时间。</p>
 

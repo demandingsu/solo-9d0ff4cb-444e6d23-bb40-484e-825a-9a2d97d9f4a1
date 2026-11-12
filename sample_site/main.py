@@ -13,10 +13,13 @@
 用于演示采集端“任一页面失败则保留上一轮结果”的行为；on=0 关闭。
 """
 
+import asyncio
+
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.templating import Jinja2Templates
 
+from attachments_data import FILES, NOTICE_ATTACHMENTS, OFFSITE_URL, SLOW_DELAY_SECONDS
 from data import ANNOUNCEMENTS, PAGE_SIZE, TYPE_LABELS, get_by_notice_no, sorted_announcements
 
 app = FastAPI(title="示例公告站")
@@ -69,7 +72,38 @@ def detail_page(request: Request, notice_no: str):
     return templates.TemplateResponse(
         request,
         "detail.html",
-        {"a": {**a, "type_label": TYPE_LABELS[a["type"]]}, "fail_on": FAIL_STATE["on"]},
+        {
+            "a": {**a, "type_label": TYPE_LABELS[a["type"]]},
+            "attachments": NOTICE_ATTACHMENTS.get(notice_no, []),
+            "fail_on": FAIL_STATE["on"],
+        },
+    )
+
+
+@app.get("/files/{filename}")
+def attachment_file(filename: str):
+    """示例附件：按场景返回正常文件或异常响应。"""
+    if filename == "prj003-missing.pdf":
+        return HTMLResponse("<h1>404 附件不存在</h1>", status_code=404)
+    if filename == "prj005-redirect.pdf":
+        return RedirectResponse(OFFSITE_URL, status_code=302)
+    data = FILES.get(filename)
+    if data is None:
+        return HTMLResponse(f"<h1>404 附件不存在：{filename}</h1>", status_code=404)
+
+    media_type = "application/pdf" if filename.endswith(".pdf") else "application/zip"
+    if filename == "prj003-slow.pdf":
+        # 慢响应示例：核查端超时后应标记为“待核实”
+        async def slow_pdf():
+            await asyncio.sleep(SLOW_DELAY_SECONDS)
+            yield data
+
+        return StreamingResponse(slow_pdf(), media_type=media_type)
+
+    return Response(
+        content=data,
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 

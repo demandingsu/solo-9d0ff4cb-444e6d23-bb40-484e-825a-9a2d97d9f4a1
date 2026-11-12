@@ -1,14 +1,15 @@
 # 截标时间核对工具
 
 面向采购专员的网页工具：从公开招标公告站抓取公告，按项目串起公告链，
-自动应用更正与撤销，给出每个项目的**最终截标时间 / 停办状态**及**依据链接**。
+自动应用更正与撤销，给出每个项目的**最终截标时间 / 停办状态**及**依据链接**；
+并提供**项目附件核查**页，核对公告附件是否真实可用。
 
 仓库包含两个服务：
 
 | 服务 | 目录 | 说明 |
 | --- | --- | --- |
-| 核对工具 | `app/` | FastAPI 网页：输入列表网址 → 抓取同源分页与详情 → 分析展示，SQLite 保存采集轮次 |
-| 示例公告站 | `sample_site/` | FastAPI 模拟公告站：3 页列表分页 + 11 条公告详情（含更正、撤销），支持故障注入 |
+| 核对工具 | `app/` | FastAPI 网页：截标时间核对 + 项目附件核查，SQLite 保存采集轮次 |
+| 示例公告站 | `sample_site/` | FastAPI 模拟公告站：3 页列表分页 + 11 条公告详情，含附件与故障注入 |
 
 ## 快速开始（Docker Compose）
 
@@ -16,7 +17,8 @@
 docker compose up --build
 ```
 
-- 核对工具：http://localhost:8000/ （打开后点击 **开始抓取**，默认已填入示例站列表网址）
+- 核对工具首页：http://localhost:8000/ （打开后点击 **开始抓取**，默认已填入示例站列表网址）
+- 项目附件核查：http://localhost:8000/attachments （默认填入示例站列表网址，输入项目编号如 `PRJ-2026-001`）
 - 示例公告站：http://localhost:8080/list.html?page=1
 
 ## 功能说明
@@ -37,6 +39,49 @@ docker compose up --build
    - **重抓不叠加**：公告只在整轮全部成功后于单事务内写入，失败轮次不留
      半截数据；页面始终只展示最近一次成功轮次的结果。
 
+4. **项目附件核查**（`/attachments`）：输入公告目录 URL 与项目编号，
+   沿同源分页与详情页找出该项目的 PDF / ZIP 附件并逐个核实。
+   - **同源限定**：只读取与公告目录同源的列表、详情、附件和重定向；
+     站外跳转与站外附件直接判为不可用，**不会请求站外内容**；
+   - **去重下载**：同一附件网址只下载一次，若被多条公告引用则合并为
+     一组引用，页面逐公告列出「附件名 — 公告编号 — 详情来源」；
+   - **流式限流**：先看 `Content-Length`，再流式读取，最多 **10 MiB**，
+     超过即停止读取并标记待核实；
+   - **文件头识别**：以 magic bytes（`%PDF-` / `PK\x03\x04`）判定真实类型，
+     并校验 PDF 的 `%%EOF` 与 ZIP 的压缩包结构，不信任扩展名或 Content-Type；
+   - **判定口径**：
+     | 情况 | 结果 |
+     | --- | --- |
+     | 正常 PDF / ZIP（结构完整） | 可用 |
+     | 站外附件 / 站外跳转 / 404 / 401/403 / 其他 4xx / 内容为空 | 不可用 |
+     | HTML 登录页伪装、文件头与内容损坏、截断 PDF、损坏 ZIP | 不可用 |
+     | 超时 / 超过 10 MiB / HTTP 5xx / 读取中断 | 待核实 |
+     | 关联列表页或详情页无法读取/解析 | 待核实（整体不能判定） |
+   - **整体结论**：只要有关联详情无法核定，或任一附件不可用/待核实，
+     就不会给出“全部可用”；找不到项目或项目无附件则显示“无法核定”。
+
+## 演示附件核查
+
+示例站为各项目准备了不同附件场景，进入 <http://localhost:8000/attachments> 输入项目编号即可看到：
+
+| 项目编号 | 附件情况 | 预期结论 |
+| --- | --- | --- |
+| `PRJ-2026-001` | 3 个唯一附件（招标文件被 2 条公告共享） | 全部可用，共享附件只下载一次 |
+| `PRJ-2026-002` | 公告存在但无附件 | 无法核定 |
+| `PRJ-2026-003` | 正常 PDF、HTML 登录页伪装、404、损坏 ZIP、截断 PDF、10.5 MiB 超限 ZIP、超时响应 | 存在不可用附件 |
+| `PRJ-2026-004` | 1 个正常 PDF | 全部可用 |
+| `PRJ-2026-005` | 正常 PDF、站外附件链接、站外跳转 | 存在不可用附件 |
+
+如需演示“详情页无法核定”：开启故障注入让 `NT-2026-0004` 返回 500 后，
+再核查 `PRJ-2026-001`，整体结论会变为“不能判定全部可用”。
+
+```bash
+# 开启故障注入：详情页 NT-2026-0004 返回 500
+curl "http://localhost:8080/admin/fail?on=1"
+# 核查 PRJ-2026-001 → 有关联详情失败，整体不能判定“全部可用”
+curl "http://localhost:8080/admin/fail?on=0"
+```
+
 ## 演示失败处理
 
 ```bash
@@ -56,20 +101,26 @@ curl "http://localhost:8080/admin/fail?on=0"
   （`tender`/`correction`/`cancellation`），字段元素
   `#project-no`、`#notice-no`、`#publish-time`、`#deadline`（如有）、
   `#target-notice`（更正/撤销必填）。
+- 附件（可选）：详情页内 `ul.attachments a[href]`，仅纳入路径以
+  `.pdf` / `.zip` 结尾的同源链接；缺少该容器时回退为 `div.notice`
+  内扩展名匹配的链接。
 
 ## 配置（环境变量）
 
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
 | `DB_PATH` | `/data/app.db`（容器） | SQLite 文件路径 |
-| `DEFAULT_START_URL` | `http://sample-site:8000/list.html?page=1` | 抓取表单预填的列表网址 |
+| `DEFAULT_START_URL` | `http://sample-site:8000/list.html?page=1` | 抓取表单预填的列表网址（附件核查页同用） |
+| `ATTACHMENT_TIMEOUT` | `10`（秒） | 附件下载单次请求超时；超时标记为待核实 |
 | `URL_REWRITE_FROM` / `URL_REWRITE_TO` | 见 compose | 把结果页中的内部网址改写为浏览器可访问地址 |
+
+> 附件读取上限固定为 10 MiB（需求约束，不做环境变量放开）。
 
 ## 本地开发与测试
 
 ```bash
 pip install -r app/requirements.txt -r sample_site/requirements.txt pytest
-python -m pytest tests/            # 单元测试：公告链分析 + 详情页解析
+python -m pytest tests/            # 单元测试：公告链分析 / 详情解析 / 附件核查
 # 手动联调：
 cd sample_site && uvicorn main:app --port 8080 &
 cd app && DB_PATH=/tmp/app.db DEFAULT_START_URL=http://localhost:8080/list.html?page=1 \

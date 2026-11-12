@@ -2,6 +2,7 @@
 
 用法：输入与示例公告站同结构的列表网址，点击“开始抓取”，系统抓取同源
 分页与全部详情页，按项目串起公告链，给出每个项目的最终截标时间与状态。
+另提供“项目附件核查”页：按公告目录 + 项目编号核对 PDF/ZIP 附件是否真实可用。
 """
 
 import os
@@ -13,6 +14,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 import analysis
+import attachments
 import db
 import scraper
 
@@ -86,3 +88,58 @@ def do_scrape(start_url: str = Form(...)):
         f"{len(result.detail_pages)} 个详情页，共 {len(result.announcements)} 条公告。"
     )
     return RedirectResponse(f"/?msg={quote(msg)}", status_code=303)
+
+
+def _render_attachment_page(
+    request: Request,
+    *,
+    report: attachments.AttachmentReport | None = None,
+    error: str = "",
+    project_no: str = "",
+    directory_url: str = "",
+):
+    banner_class = "ok"
+    if report is not None:
+        banner_class = {
+            attachments.OVERALL_ALL_OK: "ok",
+            attachments.OVERALL_UNUSABLE: "err",
+            attachments.OVERALL_PENDING: "warn",
+            attachments.OVERALL_NOT_FOUND: "warn",
+        }[report.overall]
+    return templates.TemplateResponse(
+        request,
+        "attachments.html",
+        {
+            "default_start_url": directory_url or DEFAULT_START_URL,
+            "project_no": project_no,
+            "report": report,
+            "error": error,
+            "banner_class": banner_class,
+        },
+    )
+
+
+@app.get("/attachments", response_class=HTMLResponse)
+def attachments_page(request: Request):
+    return _render_attachment_page(request)
+
+
+@app.post("/attachments/check", response_class=HTMLResponse)
+def check_attachments(
+    request: Request,
+    directory_url: str = Form(...),
+    project_no: str = Form(...),
+):
+    directory_url = directory_url.strip()
+    project_no = project_no.strip()
+    try:
+        report = attachments.check_project_attachments(directory_url, project_no)
+    except attachments.AttachmentURLInvalid as exc:
+        return _render_attachment_page(
+            request, error=str(exc), project_no=project_no, directory_url=directory_url
+        )
+    except Exception as exc:  # 兜底，避免页面对未预期异常直接 500
+        return _render_attachment_page(
+            request, error=f"核查未完成：{exc!r}", project_no=project_no, directory_url=directory_url
+        )
+    return _render_attachment_page(request, report=report, project_no=project_no)

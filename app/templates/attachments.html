@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>项目附件核查</title>
+  <style>
+    :root { --blue: #2c5f8a; --green: #1e7e34; --red: #b02a37; --gray: #6c757d; --amber: #8a6100; }
+    * { box-sizing: border-box; }
+    body { font-family: "Microsoft YaHei", "PingFang SC", sans-serif; max-width: 1080px; margin: 0 auto; padding: 1.5em 1em 3em; color: #2b2b2b; background: #fafbfc; }
+    nav.top { margin-bottom: 1em; font-size: .95em; }
+    nav.top a { color: var(--blue); margin-right: 1.2em; }
+    h1 { color: var(--blue); margin-bottom: .2em; }
+    h2 { margin-top: 1.8em; border-left: 4px solid var(--blue); padding-left: .5em; font-size: 1.15em; }
+    .subtitle { color: var(--gray); margin-top: 0; }
+    form.check { display: flex; gap: .6em; margin: 1.2em 0; flex-wrap: wrap; align-items: flex-end; }
+    form.check .field { display: flex; flex-direction: column; gap: .25em; }
+    form.check label { font-size: .85em; color: var(--gray); }
+    form.check input[type=text] { padding: .55em .7em; border: 1px solid #c8d0d8; border-radius: 5px; font-size: 1em; }
+    form.check input[name=project_no] { width: 14em; }
+    form.check input[name=directory_url] { width: 36em; }
+    form.check button { padding: .55em 1.6em; background: var(--blue); color: #fff; border: 0; border-radius: 5px; font-size: 1em; cursor: pointer; }
+    form.check button:hover { background: #234c6d; }
+    .banner { padding: .8em 1em; border-radius: 6px; margin: 1em 0; line-height: 1.6; }
+    .banner.ok { background: #e6f4ea; border: 1px solid #b7dfc2; color: var(--green); }
+    .banner.warn { background: #fff6e0; border: 1px solid #ecd39b; color: var(--amber); }
+    .banner.err { background: #fbe9eb; border: 1px solid #f1c2c8; color: var(--red); }
+    .banner.info { background: #eaf2f8; border: 1px solid #c3d7e6; color: var(--blue); }
+    .banner h3 { margin: 0 0 .3em; font-size: 1.05em; }
+    .banner ul { margin: .3em 0 0; padding-left: 1.4em; }
+    .summary { display: flex; flex-wrap: wrap; gap: .6em; margin: 1em 0; }
+    .stat { background: #fff; border: 1px solid #e2e6ea; border-radius: 6px; padding: .6em 1em; min-width: 8em; }
+    .stat .num { font-size: 1.5em; font-weight: bold; line-height: 1.2; }
+    .stat .cap { color: var(--gray); font-size: .85em; }
+    .stat.good .num { color: var(--green); }
+    .stat.bad .num { color: var(--red); }
+    .stat.wait .num { color: var(--amber); }
+    table { border-collapse: collapse; width: 100%; background: #fff; }
+    th, td { border: 1px solid #e2e6ea; padding: .55em .7em; text-align: left; vertical-align: top; }
+    th { background: #f0f4f8; white-space: nowrap; }
+    .badge { display: inline-block; padding: .15em .7em; border-radius: 1em; font-size: .9em; color: #fff; white-space: nowrap; }
+    .badge.usable { background: var(--green); }
+    .badge.unusable { background: var(--red); }
+    .badge.pending { background: #b8860b; }
+    .badge.all_ok { background: var(--green); }
+    .badge.unusable-overall { background: var(--red); }
+    .badge.pending-overall { background: #b8860b; }
+    .badge.not_found { background: var(--gray); }
+    .reason { color: #444; }
+    .muted { color: var(--gray); font-size: .9em; }
+    .refs { margin: 0; padding-left: 1.2em; }
+    .refs li { margin: .2em 0; }
+    a { color: var(--blue); word-break: break-all; }
+    .empty { color: var(--gray); background: #fff; border: 1px dashed #c8d0d8; border-radius: 6px; padding: 1.5em; text-align: center; }
+    .filesize { white-space: nowrap; }
+    code { background: #eef1f4; padding: .1em .35em; border-radius: 4px; }
+    .legend { font-size: .85em; color: var(--gray); margin-top: .6em; line-height: 1.7; }
+  </style>
+</head>
+<body>
+  <nav class="top">
+    <a href="/">截标时间核对</a><a href="/attachments">项目附件核查</a>
+  </nav>
+
+  <h1>项目附件核查</h1>
+  <p class="subtitle">
+    输入公告目录 URL 和项目编号，沿同源分页与详情页读取该项目的 PDF / ZIP 附件，
+    逐个核实附件是否真实可用。同一链接只下载一次，但逐公告保留引用来源。
+  </p>
+
+  <form class="check" method="post" action="/attachments/check">
+    <div class="field">
+      <label for="directory_url">公告目录 URL</label>
+      <input type="text" id="directory_url" name="directory_url" value="{{ default_start_url }}" placeholder="http://sample-site:8000/list.html?page=1" required>
+    </div>
+    <div class="field">
+      <label for="project_no">项目编号</label>
+      <input type="text" id="project_no" name="project_no" value="{{ project_no or '' }}" placeholder="如 PRJ-2026-001" required>
+    </div>
+    <button type="submit">核查附件</button>
+  </form>
+
+  {% if error %}
+  <div class="banner err"><h3>无法开始核查</h3>{{ error }}</div>
+  {% endif %}
+
+  {% if report %}
+  <div class="banner {{ banner_class }}">
+    <h3>项目 {{ report.project_no }}：{{ report.overall_label }}</h3>
+    <div>{{ report.overall_reason }}</div>
+    {% if report.issues %}
+    <ul>
+      {% for issue in report.issues %}
+      <li>列表/详情无法核定：<a href="{{ issue.url|public_url }}" target="_blank" rel="noopener">{{ issue.url|public_url }}</a>
+        <span class="muted">（{{ issue.reason }}）</span></li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+  </div>
+
+  <div class="summary">
+    <div class="stat"><div class="num">{{ report.matched_details|length }}</div><div class="cap">匹配公告</div></div>
+    <div class="stat"><div class="num">{{ report.download_count }}</div><div class="cap">唯一附件链接</div></div>
+    <div class="stat good"><div class="num">{{ report.usable_count }}</div><div class="cap">可用</div></div>
+    <div class="stat bad"><div class="num">{{ report.unusable_count }}</div><div class="cap">不可用</div></div>
+    <div class="stat wait"><div class="num">{{ report.pending_count }}</div><div class="cap">待核实</div></div>
+    <div class="stat"><div class="num">{{ report.list_pages|length }}</div><div class="cap">列表页</div></div>
+  </div>
+
+  <h2>项目公告</h2>
+  {% if report.matched_details %}
+  <table>
+    <thead>
+      <tr><th>公告编号</th><th>类型</th><th>发布时间</th><th>标题 / 来源</th></tr>
+    </thead>
+    <tbody>
+      {% for d in report.matched_details %}
+      <tr>
+        <td><strong>{{ d.notice_no }}</strong></td>
+        <td>{{ d.type_label }}</td>
+        <td class="muted">{{ d.publish_time }}</td>
+        <td>{{ d.title }}<br><a href="{{ d.url|public_url }}" target="_blank" rel="noopener">{{ d.url|public_url }}</a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="empty">未在公告目录中找到项目编号 {{ report.project_no }} 的公告。</div>
+  {% endif %}
+
+  <h2>附件核查结果</h2>
+  {% if report.attachments %}
+  <table>
+    <thead>
+      <tr><th>附件</th><th>核查结果</th><th>原因</th><th>实际类型 / 大小</th><th>引用公告（来源）</th></tr>
+    </thead>
+    <tbody>
+      {% for a in report.attachments %}
+      <tr>
+        <td>
+          <strong>{{ a.filename }}</strong><br>
+          <a href="{{ a.url|public_url }}" target="_blank" rel="noopener">{{ a.url|public_url }}</a>
+          {% if a.final_url and a.final_url != a.url %}
+          <br><span class="muted">实际读取地址：<a href="{{ a.final_url|public_url }}" target="_blank" rel="noopener">{{ a.final_url|public_url }}</a></span>
+          {% endif %}
+          {% if a.declared_ext %}<br><span class="muted">链接扩展名：{{ a.declared_ext }}</span>{% endif %}
+        </td>
+        <td><span class="badge {{ a.status }}">{{ a.status_label }}</span></td>
+        <td class="reason">{{ a.reason }}</td>
+        <td>
+          {{ a.actual_type_label }}
+          {% if a.size %}<br><span class="filesize muted">{{ a.size }} 字节（{{ '%.2f'|format(a.size / 1024) }} KiB）</span>{% endif %}
+          {% if a.content_type %}<br><span class="muted">Content-Type：{{ a.content_type }}</span>{% endif %}
+        </td>
+        <td>
+          <ul class="refs">
+            {% for r in a.references %}
+            <li>{{ r.label }} — 公告 {{ r.notice_no }}
+              <a href="{{ r.detail_url|public_url }}" target="_blank" rel="noopener">详情</a></li>
+            {% endfor %}
+          </ul>
+          {% if a.references|length > 1 %}<span class="muted">共 {{ a.references|length }} 条引用，仅下载一次</span>{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="empty">该项目公告中未找到 PDF / ZIP 附件。</div>
+  {% endif %}
+
+  <p class="legend">
+    判定口径：站外跳转、404、损坏文件、HTML 伪装 → <strong>不可用</strong>；
+    超时、超过 10 MiB 上限、详情页失败 → <strong>待核实</strong>。
+    只要有关联详情无法核定或任一附件无法核定，就不会判定为“全部可用”。
+  </p>
+  {% else %}
+  <div class="empty">尚无核查结果。请在上方输入公告目录 URL 与项目编号后点击“核查附件”。</div>
+  {% endif %}
+</body>
+</html>
